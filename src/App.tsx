@@ -18,6 +18,7 @@ import { collection, onSnapshot, doc, setDoc, deleteDoc, query, orderBy, serverT
 const CAMP_KEY = 'adt4_campaigns';
 const ENTRIES_KEY = 'adt4_entries';
 const RATE_KEY = 'adt4_rate';
+const PUBLIC_UID = 'public_admin'; // Default ID for "No Login" mode
 
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
@@ -29,6 +30,8 @@ export default function App() {
   const [dateRange, setDateRange] = useState<DateRange>({ from: null, to: null, label: 'Lifetime', mode: 'all' });
   const [selectedCompany, setSelectedCompany] = useState<string>('all');
   
+  const effectiveUid = user?.uid || PUBLIC_UID;
+  
   // Modals
   const [isCampModalOpen, setIsCampModalOpen] = useState(false);
   const [editingCamp, setEditingCamp] = useState<Campaign | null>(null);
@@ -38,56 +41,52 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setIsAuthReady(true);
-      if (u) {
-        // Create user profile if not exists
-        const userRef = doc(db, 'users', u.uid);
-        getDoc(userRef).then(snap => {
-          if (!snap.exists()) {
-            setDoc(userRef, {
-              uid: u.uid,
-              email: u.email,
-              displayName: u.displayName,
-              photoURL: u.photoURL,
-              createdAt: Date.now(),
-              role: 'user'
-            }).catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${u.uid}`));
-          }
-        });
-      }
+      
+      const uid = u?.uid || PUBLIC_UID;
+      // Create user profile if not exists
+      const userRef = doc(db, 'users', uid);
+      getDoc(userRef).then(snap => {
+        if (!snap.exists()) {
+          setDoc(userRef, {
+            uid: uid,
+            email: u?.email || 'public@example.com',
+            displayName: u?.displayName || 'Public User',
+            photoURL: u?.photoURL || '',
+            createdAt: Date.now(),
+            role: 'user'
+          }).catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${uid}`));
+        }
+      });
     });
     return () => unsubscribe();
   }, []);
 
   // Firestore Listeners
   useEffect(() => {
-    if (!user) {
-      setCampaigns([]);
-      setEntries([]);
-      return;
-    }
+    if (!isAuthReady) return;
 
-    const campsRef = collection(db, 'users', user.uid, 'campaigns');
-    const entriesRef = collection(db, 'users', user.uid, 'entries');
+    const campsRef = collection(db, 'users', effectiveUid, 'campaigns');
+    const entriesRef = collection(db, 'users', effectiveUid, 'entries');
 
     const unsubCamps = onSnapshot(query(campsRef, orderBy('createdAt', 'desc')), 
       (snap) => {
         setCampaigns(snap.docs.map(d => d.data() as Campaign));
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, `users/${user.uid}/campaigns`)
+      (err) => handleFirestoreError(err, OperationType.LIST, `users/${effectiveUid}/campaigns`)
     );
 
     const unsubEntries = onSnapshot(query(entriesRef, orderBy('date', 'desc')), 
       (snap) => {
         setEntries(snap.docs.map(d => d.data() as AdEntry));
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, `users/${user.uid}/entries`)
+      (err) => handleFirestoreError(err, OperationType.LIST, `users/${effectiveUid}/entries`)
     );
 
     return () => {
       unsubCamps();
       unsubEntries();
     };
-  }, [user]);
+  }, [effectiveUid, isAuthReady]);
 
   useEffect(() => {
     if (editingCamp) {
@@ -157,7 +156,6 @@ export default function App() {
 
   const handleAddCampaign = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!user) return;
     const formData = new FormData(e.currentTarget);
     const id = Math.random().toString(36).substring(2, 9);
     const newCamp: Campaign & { uid: string } = {
@@ -172,21 +170,21 @@ export default function App() {
       note: formData.get('note') as string,
       status: 'active',
       createdAt: Date.now(),
-      uid: user.uid
+      uid: effectiveUid
     };
     
     try {
-      await setDoc(doc(db, 'users', user.uid, 'campaigns', id), newCamp);
+      await setDoc(doc(db, 'users', effectiveUid, 'campaigns', id), newCamp);
       setIsCampModalOpen(false);
       setNewCampCompany('');
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/campaigns/${id}`);
+      handleFirestoreError(err, OperationType.WRITE, `users/${effectiveUid}/campaigns/${id}`);
     }
   };
 
   const handleUpdateCampaign = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!editingCamp || !user) return;
+    if (!editingCamp) return;
     const formData = new FormData(e.currentTarget);
     const updated = {
       ...editingCamp,
@@ -202,68 +200,60 @@ export default function App() {
     };
     
     try {
-      await setDoc(doc(db, 'users', user.uid, 'campaigns', editingCamp.id), updated);
+      await setDoc(doc(db, 'users', effectiveUid, 'campaigns', editingCamp.id), updated);
       setEditingCamp(null);
       setEditCampCompany('');
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/campaigns/${editingCamp.id}`);
+      handleFirestoreError(err, OperationType.WRITE, `users/${effectiveUid}/campaigns/${editingCamp.id}`);
     }
   };
 
   const handleDeleteCampaign = async (id: string) => {
-    if (!user) return;
     if (confirm('এই Campaign এবং এর সব এন্ট্রি মুছে যাবে! মুছবেন?')) {
       try {
-        await deleteDoc(doc(db, 'users', user.uid, 'campaigns', id));
-        // Entries are usually deleted manually or handled by cloud functions, 
-        // but for simplicity here we'll just delete the campaign.
-        // In a real app, you'd delete associated entries too.
+        await deleteDoc(doc(db, 'users', effectiveUid, 'campaigns', id));
       } catch (err) {
-        handleFirestoreError(err, OperationType.DELETE, `users/${user.uid}/campaigns/${id}`);
+        handleFirestoreError(err, OperationType.DELETE, `users/${effectiveUid}/campaigns/${id}`);
       }
     }
   };
 
   const handleDeleteEntry = async (id: string) => {
-    if (!user) return;
     if (confirm('মুছবেন?')) {
       try {
-        await deleteDoc(doc(db, 'users', user.uid, 'entries', id));
+        await deleteDoc(doc(db, 'users', effectiveUid, 'entries', id));
       } catch (err) {
-        handleFirestoreError(err, OperationType.DELETE, `users/${user.uid}/entries/${id}`);
+        handleFirestoreError(err, OperationType.DELETE, `users/${effectiveUid}/entries/${id}`);
       }
     }
   };
 
   const handleClearAllEntries = async () => {
-    if (!user) return;
     if (confirm('সব এন্ট্রি মুছবেন?')) {
       try {
-        // In a real app, use a batch or cloud function
-        await Promise.all(entries.map(e => deleteDoc(doc(db, 'users', user.uid, 'entries', e.id))));
+        await Promise.all(entries.map(e => deleteDoc(doc(db, 'users', effectiveUid, 'entries', e.id))));
       } catch (err) {
-        handleFirestoreError(err, OperationType.DELETE, `users/${user.uid}/entries/batch`);
+        handleFirestoreError(err, OperationType.DELETE, `users/${effectiveUid}/entries/batch`);
       }
     }
   };
 
   const handleAddEntry = async (entry: Partial<AdEntry>) => {
-    if (!user) return;
     const camp = campaigns.find(c => c.id === entry.campId);
     const id = Math.random().toString(36).substring(2, 9);
     const newEntry: AdEntry & { uid: string } = {
       id,
       campName: camp?.name || '',
       ...entry as any,
-      uid: user.uid
+      uid: effectiveUid
     };
     
     try {
-      await setDoc(doc(db, 'users', user.uid, 'entries', id), newEntry);
+      await setDoc(doc(db, 'users', effectiveUid, 'entries', id), newEntry);
       setQuickAddCampId(undefined);
       if (activeTab === 'entry') setActiveTab('campaigns');
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/entries/${id}`);
+      handleFirestoreError(err, OperationType.WRITE, `users/${effectiveUid}/entries/${id}`);
     }
   };
 
@@ -302,64 +292,33 @@ export default function App() {
             animate={{ opacity: 1, x: 0 }}
             className="flex items-center gap-3 px-4 py-2 bg-white border border-slate-200 rounded-2xl shadow-sm"
           >
-            {user ? (
-              <div className="flex items-center gap-4">
-                <div className="hidden sm:flex flex-col items-end border-r border-slate-100 pr-4">
-                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">Rate</span>
-                  <div className="flex items-center gap-1">
-                    <span className="text-[10px] font-bold text-slate-500">$1 =</span>
-                    <input 
-                      type="number" 
-                      className="w-10 bg-transparent border-none focus:ring-0 text-sm font-mono font-bold text-blue-600 p-0 text-right"
-                      value={usdRate}
-                      onChange={(e) => setUsdRate(parseFloat(e.target.value) || 0)}
-                    />
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="flex flex-col items-end">
-                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none mb-0.5">Logged in as</span>
-                    <span className="text-[10px] font-black text-slate-900 truncate max-w-[100px]">{user.displayName || user.email}</span>
-                  </div>
-                  <button 
-                    onClick={logout}
-                    className="w-8 h-8 flex items-center justify-center rounded-xl bg-slate-50 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors"
-                    title="Logout"
-                  >
-                    <LogOut className="w-4 h-4" />
-                  </button>
+            <div className="flex items-center gap-4">
+              <div className="flex flex-col items-end border-r border-slate-100 pr-4">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">Rate</span>
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] font-bold text-slate-500">$1 =</span>
+                  <input 
+                    type="number" 
+                    className="w-10 bg-transparent border-none focus:ring-0 text-sm font-mono font-bold text-blue-600 p-0 text-right"
+                    value={usdRate}
+                    onChange={(e) => setUsdRate(parseFloat(e.target.value) || 0)}
+                  />
                 </div>
               </div>
-            ) : (
-              <button 
-                onClick={loginWithGoogle}
-                className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/20"
-              >
-                <LogIn className="w-3.5 h-3.5" />
-                Login
-              </button>
-            )}
+              <div className="flex items-center gap-3">
+                <div className="flex flex-col items-end">
+                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none mb-0.5">Status</span>
+                  <span className="text-[10px] font-black text-slate-900">Connected</span>
+                </div>
+                <div className="w-8 h-8 flex items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                  <TrendingUp className="w-4 h-4" />
+                </div>
+              </div>
+            </div>
           </motion.div>
         </header>
 
-        {!user && isAuthReady ? (
-          <div className="flex flex-col items-center justify-center py-20 text-center space-y-6">
-            <div className="w-20 h-20 bg-white border-2 border-slate-100 rounded-3xl flex items-center justify-center text-slate-200 shadow-xl">
-              <User className="w-10 h-10" />
-            </div>
-            <div className="space-y-2">
-              <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Welcome to Ads Tracker Pro</h2>
-              <p className="text-xs text-slate-400 font-medium max-w-xs mx-auto">আপনার সব ক্যাম্পেইন এবং এন্ট্রি ডেটা নিরাপদে সেভ রাখতে লগইন করুন।</p>
-            </div>
-            <button 
-              onClick={loginWithGoogle}
-              className="btn btn-primary px-8 py-3 rounded-2xl flex items-center gap-3 text-xs font-black uppercase tracking-widest shadow-xl shadow-blue-500/20"
-            >
-              <LogIn className="w-4 h-4" />
-              Google দিয়ে লগইন করুন
-            </button>
-          </div>
-        ) : !isAuthReady ? (
+        {!isAuthReady ? (
           <div className="flex items-center justify-center py-40">
             <div className="w-8 h-8 border-4 border-blue-600/20 border-t-blue-600 rounded-full animate-spin" />
           </div>
@@ -739,7 +698,6 @@ export default function App() {
                   className="input" 
                   defaultValue={updatingAdset.status}
                   onChange={async (e) => {
-                    if (!user) return;
                     const newStatus = e.target.value as Status;
                     const affectedEntries = entries.filter(ent => 
                       ent.campId === updatingAdset.campId && ent.adset === updatingAdset.name
@@ -747,11 +705,11 @@ export default function App() {
                     
                     try {
                       await Promise.all(affectedEntries.map(ent => 
-                        setDoc(doc(db, 'users', user.uid, 'entries', ent.id), { ...ent, adsetStatus: newStatus })
+                        setDoc(doc(db, 'users', effectiveUid, 'entries', ent.id), { ...ent, adsetStatus: newStatus })
                       ));
                       setUpdatingAdset(null);
                     } catch (err) {
-                      handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/entries/batch`);
+                      handleFirestoreError(err, OperationType.WRITE, `users/${effectiveUid}/entries/batch`);
                     }
                   }}
                 >
@@ -813,10 +771,10 @@ export default function App() {
                   };
                   
                   try {
-                    await setDoc(doc(db, 'users', user.uid, 'entries', entry.id), updated);
+                    await setDoc(doc(db, 'users', effectiveUid, 'entries', entry.id), updated);
                     setEditingEntryId(null);
                   } catch (err) {
-                    handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/entries/${entry.id}`);
+                    handleFirestoreError(err, OperationType.WRITE, `users/${effectiveUid}/entries/${entry.id}`);
                   }
                 }} 
                 className="space-y-4"
