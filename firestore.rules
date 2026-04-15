@@ -1,0 +1,147 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: /users/{userId}
+    // Fields:
+    //   - uid: string (required, immutable)
+    //   - email: string (required, email format)
+    //   - displayName: string (optional)
+    //   - photoURL: string (optional, url format)
+    //   - createdAt: number (required)
+    //   - role: string (required, enum: ['admin', 'user'])
+    //
+    // Collection: /users/{userId}/campaigns/{campaignId}
+    // Fields:
+    //   - id: string (required)
+    //   - name: string (required, size < 100)
+    //   - company: string (required, size < 100)
+    //   - platform: string (optional)
+    //   - start: string (optional)
+    //   - end: string (optional)
+    //   - defaultPrice: number (optional)
+    //   - defaultCost: number (optional)
+    //   - note: string (optional, size < 1000)
+    //   - status: string (required, enum: ['active', 'paused', 'ended'])
+    //   - createdAt: number (required)
+    //   - uid: string (required, matches owner)
+    //
+    // Collection: /users/{userId}/entries/{entryId}
+    // Fields:
+    //   - id: string (required)
+    //   - campId: string (required)
+    //   - campName: string (required)
+    //   - adset: string (required)
+    //   - adsetStatus: string (required, enum: ['active', 'paused', 'ended'])
+    //   - date: string (required, format: YYYY-MM-DD)
+    //   - spendUSD: number (required)
+    //   - spendBDT: number (required)
+    //   - sales: number (required)
+    //   - rev: number (required)
+    //   - profit: number (required)
+    //   - roas: number (required)
+    //   - cps: number (required)
+    //   - usdRate: number (required)
+    //   - uid: string (required, matches owner)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "jhohirul.me@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUrl(url) {
+      return url is string && (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasRequiredFields(['uid', 'email', 'createdAt', 'role']) &&
+             data.uid == request.auth.uid &&
+             isValidEmail(data.email) &&
+             data.role in ['admin', 'user'] &&
+             data.createdAt is number;
+    }
+
+    function isValidCampaign(data) {
+      return hasRequiredFields(['id', 'name', 'company', 'status', 'uid', 'createdAt']) &&
+             data.uid == request.auth.uid &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.company is string && data.company.size() > 0 && data.company.size() < 100 &&
+             data.status in ['active', 'paused', 'ended'] &&
+             (!('note' in data) || (data.note is string && data.note.size() < 1000));
+    }
+
+    function isValidEntry(data) {
+      return hasRequiredFields(['id', 'campId', 'date', 'uid', 'spendUSD', 'spendBDT', 'sales', 'rev']) &&
+             data.uid == request.auth.uid &&
+             data.campId is string &&
+             data.date is string && data.date.matches("^\\d{4}-\\d{2}-\\d{2}$") &&
+             data.spendUSD is number &&
+             data.spendBDT is number &&
+             data.sales is number &&
+             data.rev is number;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == 'user' || isAdmin());
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == resource.data.role || isAdmin());
+
+      match /campaigns/{campaignId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId) && isValidCampaign(request.resource.data);
+        allow update: if isOwner(userId) && isValidCampaign(request.resource.data);
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+
+      match /entries/{entryId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId) && isValidEntry(request.resource.data);
+        allow update: if isOwner(userId) && isValidEntry(request.resource.data);
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+    }
+    
+    // Default deny
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

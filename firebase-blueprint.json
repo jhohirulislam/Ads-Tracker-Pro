@@ -1,0 +1,82 @@
+{
+  "entities": {
+    "Campaign": {
+      "title": "Campaign",
+      "description": "An advertising campaign",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "company": { "type": "string" },
+        "platform": { "type": "string" },
+        "start": { "type": "string" },
+        "end": { "type": "string" },
+        "defaultPrice": { "type": "number" },
+        "defaultCost": { "type": "number" },
+        "note": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "paused", "ended"] },
+        "createdAt": { "type": "number" },
+        "uid": { "type": "string" }
+      },
+      "required": ["id", "name", "company", "status", "uid"]
+    },
+    "AdEntry": {
+      "title": "AdEntry",
+      "description": "A daily performance entry for an ad set",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "campId": { "type": "string" },
+        "campName": { "type": "string" },
+        "adset": { "type": "string" },
+        "adsetStatus": { "type": "string", "enum": ["active", "paused", "ended"] },
+        "date": { "type": "string" },
+        "spendUSD": { "type": "number" },
+        "spendBDT": { "type": "number" },
+        "sales": { "type": "number" },
+        "price": { "type": "number" },
+        "cost": { "type": "number" },
+        "other": { "type": "number" },
+        "rev": { "type": "number" },
+        "prodCostTotal": { "type": "number" },
+        "totalCost": { "type": "number" },
+        "profit": { "type": "number" },
+        "roas": { "type": "number" },
+        "cpp": { "type": "number" },
+        "cps": { "type": "number" },
+        "usdRate": { "type": "number" },
+        "note": { "type": "string" },
+        "uid": { "type": "string" }
+      },
+      "required": ["id", "campId", "date", "uid"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User specific settings and profile",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "role": { "type": "string", "enum": ["admin", "user"] }
+      },
+      "required": ["uid", "email"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Private user profile data"
+    },
+    "/users/{userId}/campaigns/{campaignId}": {
+      "schema": "Campaign",
+      "description": "User's advertising campaigns"
+    },
+    "/users/{userId}/entries/{entryId}": {
+      "schema": "AdEntry",
+      "description": "User's daily ad performance entries"
+    }
+  }
+}
